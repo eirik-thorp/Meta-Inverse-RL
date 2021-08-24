@@ -28,7 +28,6 @@ from garage.torch.optimizers import (ConjugateGradientOptimizer,
 class PEMIRL(RLAlgorithm):
 
     r"""A PEMIRL model based on https://arxiv.org/abs/1909.09314.
-
     Args:
         env (list[Environment]): Batch of sampled environment updates(
             EnvUpdate), which, when invoked on environments, will configure
@@ -110,7 +109,7 @@ class PEMIRL(RLAlgorithm):
                 center_adv=False,
                 positive_adv=False):
 
-    self._env = env
+        self._env = env
     self._single_env = env[0]()
     self._experts_dir = experts_dir
     self._sampler = sampler
@@ -247,249 +246,249 @@ class PEMIRL(RLAlgorithm):
     )
 
 
-   def train(self, trainer):
+    def train(self, trainer):
 
-      """ Main training loop """
+        """ Main training loop """
 
-      #Get expert trajectories from directory and store in buffer
-      self._obtain_experts(self._experts_dir)
+        #Get expert trajectories from directory and store in buffer
+        self._obtain_experts(self._experts_dir)
 
-      #Initialize Context-Encoder Parameters with Meta-IL
-      if not self._is_resuming:
-          logger.log('Pre-Training...')
-          self._pre_train()
+        #Initialize Context-Encoder Parameters with Meta-IL
+        if not self._is_resuming:
+            logger.log('Pre-Training...')
+            self._pre_train()
 
-      #Main training loop
-      for _ in trainer.step_epochs():
+        #Main training loop
+        for _ in trainer.step_epochs():
 
-       epoch = trainer.step_itr / self._num_steps_per_epoch
+            epoch = trainer.step_itr / self._num_steps_per_epoch
 
-       logger.log('Training...')
+            logger.log('Training...')
 
-       for _ in range(self._num_steps_per_epoch):
+        for _ in range(self._num_steps_per_epoch):
 
-        indices = np.random.choice(range(self._num_train_tasks),
-                                self._meta_batch_size)
+            indices = np.random.choice(range(self._num_train_tasks),
+                                    self._meta_batch_size)
 
-        #Sample expert demonstrations
-        # data shape is (task, batch, T, feat)
-        exp_obs, exp_next_obs, exp_actions, exp_rewards = self._sample_experts(indices)
-        exp_traj_batch = torch.cat([exp_obs, exp_actions], dim=-1)
-        axp_traj_batch = exp_traj_batch.view(self._meta_batch_size, self.T*(self.O + self.A))
+            #Sample expert demonstrations
+            # data shape is (task, batch, T, feat)
+            exp_obs, exp_next_obs, exp_actions, exp_rewards = self._sample_experts(indices)
+            exp_traj_batch = torch.cat([exp_obs, exp_actions], dim=-1)
+            axp_traj_batch = exp_traj_batch.view(self._meta_batch_size, self.T*(self.O + self.A))
 
-        #For logging only
-        returns = torch.sum(exp_rewards, dim=2).mean(dim=1)
-        #exp_succ = torch.any(exp_success, dim=2).float().mean(dim=1)
-        with tabular.prefix('Expert' + '/'):
-            tabular.record('AverageReturn', np.mean(returns.cpu().detach().numpy()))
-            tabular.record('MaxReturn', np.max(returns.cpu().detach().numpy()))
-            tabular.record('MinReturn', np.min(returns.cpu().detach().numpy()))
-            #tabular.record('SuccessRate', np.mean(exp_succ.detach().numpy()))
+            #For logging only
+            returns = torch.sum(exp_rewards, dim=2).mean(dim=1)
+            #exp_succ = torch.any(exp_success, dim=2).float().mean(dim=1)
+            with tabular.prefix('Expert' + '/'):
+                tabular.record('AverageReturn', np.mean(returns.cpu().detach().numpy()))
+                tabular.record('MaxReturn', np.max(returns.cpu().detach().numpy()))
+                tabular.record('MinReturn', np.min(returns.cpu().detach().numpy()))
+                #tabular.record('SuccessRate', np.mean(exp_succ.detach().numpy()))
 
-        #Infer latent variable based on expert trajectories
-        self._policy.context_get_actions(exp_traj_batch)
+            #Infer latent variable based on expert trajectories
+            self._policy.context_get_actions(exp_traj_batch)
 
-        #Obtain samples from policy, with latent context serving as part of the observation.
-        for i, idx in enumerate(indices):
-            self._replay_buffers[i].clear()
-            self._task_idx = i
-            self._policy._task_idx = i
-            self._obtain_samples(trainer, epoch, self._batch_size)
+            #Obtain samples from policy, with latent context serving as part of the observation.
+            for i, idx in enumerate(indices):
+                self._replay_buffers[i].clear()
+                self._task_idx = i
+                self._policy._task_idx = i
+                self._obtain_samples(trainer, epoch, self._batch_size)
 
-        #Obtain samples from current batch of tasks
-        # data shape should be (task, batch, T, feat) where T is max length of an episode
-        obs, next_obs, actions, next_actions, \
-         actions_log_prob, rewards, successes, lengths = self._sample_data(indices)
+            #Obtain samples from current batch of tasks
+            # data shape should be (task, batch, T, feat) where T is max length of an episode
+            obs, next_obs, actions, next_actions, \
+                actions_log_prob, rewards, successes, lengths = self._sample_data(indices)
 
-        #For logging purposes only
-        returns = torch.sum(rewards, dim=2).mean(dim=1)
-        successes = successes > 0.5
-        succ = torch.any(successes, dim=2).float().mean(dim=1)
-        with tabular.prefix('Sample' + '/'):
-            tabular.record('AverageReturn', np.mean(returns.cpu().detach().numpy()))
-            tabular.record('MaxReturn', np.max(returns.cpu().detach().numpy()))
-            tabular.record('MinReturn', np.min(returns.cpu().detach().numpy()))
-            tabular.record('SuccessRate', np.mean(succ.cpu().detach().numpy()))
+            #For logging purposes only
+            returns = torch.sum(rewards, dim=2).mean(dim=1)
+            successes = successes > 0.5
+            succ = torch.any(successes, dim=2).float().mean(dim=1)
+            with tabular.prefix('Sample' + '/'):
+                tabular.record('AverageReturn', np.mean(returns.cpu().detach().numpy()))
+                tabular.record('MaxReturn', np.max(returns.cpu().detach().numpy()))
+                tabular.record('MinReturn', np.min(returns.cpu().detach().numpy()))
+                tabular.record('SuccessRate', np.mean(succ.cpu().detach().numpy()))
 
-        #Get random tasks for this step - meta_batch_size is number of tasks
-        indices = np.random.choice(range(self._num_train_tasks),
-                                self._meta_batch_size)
+            #Get random tasks for this step - meta_batch_size is number of tasks
+            indices = np.random.choice(range(self._num_train_tasks),
+                                    self._meta_batch_size)
 
-        #Sample expert demonstrations
-        # data shape is (task, batch, T, feat)
-        exp_obs, exp_next_obs, exp_actions, exp_rewards = self._sample_experts(indices)
-        exp_traj_batch = torch.cat([exp_obs, exp_actions], 
-            dim=-1).view(self._meta_batch_size, self.T*(self.O + self.A))
+            #Sample expert demonstrations
+            # data shape is (task, batch, T, feat)
+            exp_obs, exp_next_obs, exp_actions, exp_rewards = self._sample_experts(indices)
+            exp_traj_batch = torch.cat([exp_obs, exp_actions], 
+                dim=-1).view(self._meta_batch_size, self.T*(self.O + self.A))
 
-        #For logging only
-        returns = torch.sum(exp_rewards, dim=2).mean(dim=1)
-        #exp_succ = torch.any(exp_success, dim=2).float().mean(dim=1)
-        with tabular.prefix('Expert' + '/'):
-            tabular.record('AverageReturn', np.mean(returns.cpu().detach().numpy()))
-            tabular.record('MaxReturn', np.max(returns.cpu().detach().numpy()))
-            tabular.record('MinReturn', np.min(returns.cpu().detach().numpy()))
-            #tabular.record('SuccessRate', np.mean(exp_succ.detach().numpy()))
+            #For logging only
+            returns = torch.sum(exp_rewards, dim=2).mean(dim=1)
+            #exp_succ = torch.any(exp_success, dim=2).float().mean(dim=1)
+            with tabular.prefix('Expert' + '/'):
+                tabular.record('AverageReturn', np.mean(returns.cpu().detach().numpy()))
+                tabular.record('MaxReturn', np.max(returns.cpu().detach().numpy()))
+                tabular.record('MinReturn', np.min(returns.cpu().detach().numpy()))
+                #tabular.record('SuccessRate', np.mean(exp_succ.detach().numpy()))
 
-        #Infer latent variable based on expert trajectories
-        self._policy.context_get_actions(exp_traj_batch)
+            #Infer latent variable based on expert trajectories
+            self._policy.context_get_actions(exp_traj_batch)
 
-        #Obtain samples from policy, with latent context serving as part of the observation
-        for i, idx in enumerate(indices):
-            self._replay_buffers[i].clear()
-            self._task_idx = i
-            self._policy._task_idx = i
-            self._obtain_samples(trainer, epoch, self._batch_size)
+            #Obtain samples from policy, with latent context serving as part of the observation
+            for i, idx in enumerate(indices):
+                self._replay_buffers[i].clear()
+                self._task_idx = i
+                self._policy._task_idx = i
+                self._obtain_samples(trainer, epoch, self._batch_size)
 
-        #Obtain samples from current batch of tasks
-        # data shape should be (task, batch, T, feat) where T is max length of an episode
-        obs, next_obs, actions, next_actions, \
-         actions_log_prob, rewards, successes, lengths = self._sample_data(indices)
+            #Obtain samples from current batch of tasks
+            # data shape should be (task, batch, T, feat) where T is max length of an episode
+            obs, next_obs, actions, next_actions, \
+                actions_log_prob, rewards, successes, lengths = self._sample_data(indices)
 
-        #For logging purposes only
-        returns = torch.sum(rewards, dim=2).mean(dim=1)
-        successes = successes > 0.5
-        succ = torch.any(successes, dim=2).float().mean(dim=1)
-        with tabular.prefix('Sample' + '/'):
-            tabular.record('AverageReturn', np.mean(returns.cpu().detach().numpy()))
-            tabular.record('MaxReturn', np.max(returns.cpu().detach().numpy()))
-            tabular.record('MinReturn', np.min(returns.cpu().detach().numpy()))
-            tabular.record('SuccessRate', np.mean(succ.cpu().detach().numpy()))
+            #For logging purposes only
+            returns = torch.sum(rewards, dim=2).mean(dim=1)
+            successes = successes > 0.5
+            succ = torch.any(successes, dim=2).float().mean(dim=1)
+            with tabular.prefix('Sample' + '/'):
+                tabular.record('AverageReturn', np.mean(returns.cpu().detach().numpy()))
+                tabular.record('MaxReturn', np.max(returns.cpu().detach().numpy()))
+                tabular.record('MinReturn', np.min(returns.cpu().detach().numpy()))
+                tabular.record('SuccessRate', np.mean(succ.cpu().detach().numpy()))
 
-        # Probability of observing expert actions based on expert observation
-        # and context, under current distribution
-        indices = list(range(self._num_train_tasks))
-        #Sample ~2 expert trajectories from each task
-        exp_obs, exp_next_obs, exp_actions, exp_rewards = self._sample_experts(indices, n=2)
-        #Log-probability of observing expert actions under current policy distribution
-        exp_action_log_prob = self._policy.get_probability(
-         exp_obs.view(-1, self.T, self.O), exp_actions.view(-1, self.T, self.A))
+            # Probability of observing expert actions based on expert observation
+            # and context, under current distribution
+            indices = list(range(self._num_train_tasks))
+            #Sample ~2 expert trajectories from each task
+            exp_obs, exp_next_obs, exp_actions, exp_rewards = self._sample_experts(indices, n=2)
+            #Log-probability of observing expert actions under current policy distribution
+            exp_action_log_prob = self._policy.get_probability(
+                exp_obs.view(-1, self.T, self.O), exp_actions.view(-1, self.T, self.A))
 
-        exp_obs = exp_obs.view(-1, self.T, self.O)
-        exp_next_obs = exp_next_obs.view(-1, self.T, self.O)
-        exp_actions = exp_actions.view(-1, self.T, self.A)
-        exp_action_log_prob = exp_action_log_prob.view(-1, self.T, 1)
+            exp_obs = exp_obs.view(-1, self.T, self.O)
+            exp_next_obs = exp_next_obs.view(-1, self.T, self.O)
+            exp_actions = exp_actions.view(-1, self.T, self.A)
+            exp_action_log_prob = exp_action_log_prob.view(-1, self.T, 1)
 
-        #Train AIRL
-        self._train_airl(obs, next_obs, actions_log_prob, exp_obs, 
-            exp_next_obs, exp_actions, exp_action_log_prob, exp_traj_batch)
+            #Train AIRL
+            self._train_airl(obs, next_obs, actions_log_prob, exp_obs, 
+                exp_next_obs, exp_actions, exp_action_log_prob, exp_traj_batch)
 
-        #Eval AIRL, score is the discriminator score
-        rewards = self._eval_airl(obs, next_obs, actions, actions_log_prob, 
-            exp_traj_batch.view(-1, self.T*(self.O+self.A)))
+            #Eval AIRL, score is the discriminator score
+            rewards = self._eval_airl(obs, next_obs, actions, actions_log_prob, 
+                exp_traj_batch.view(-1, self.T*(self.O+self.A)))
 
-        ### Optimize Policy with TRPO ###
+            ### Optimize Policy with TRPO ###
 
-        ## Data shape is X x N X T
-        # X - meta_batch_size, N - batch_size, T - max_episode_length
+            ## Data shape is X x N X T
+            # X - meta_batch_size, N - batch_size, T - max_episode_length
 
-        ## X x N x T x O, O is the observation space
-        obs_clean = obs.view(self._meta_batch_size, self._batch_size, self.T, self.O)
-        ## X x N x T x A, A is the action space
-        actions = actions.view(self._meta_batch_size, self._batch_size, self.T, self.A)
+            ## X x N x T x O, O is the observation space
+            obs_clean = obs.view(self._meta_batch_size, self._batch_size, self.T, self.O)
+            ## X x N x T x A, A is the action space
+            actions = actions.view(self._meta_batch_size, self._batch_size, self.T, self.A)
 
-        #Latent variable - X x N x T x Z, where Z is the dimension of the latent variable
-        z = self.z.view(self._meta_batch_size, self._batch_size, self.T, self._latent_dim)
+            #Latent variable - X x N x T x Z, where Z is the dimension of the latent variable
+            z = self.z.view(self._meta_batch_size, self._batch_size, self.T, self._latent_dim)
 
-        # Policy input - X x N x T x (O+Z)
-        obs = torch.cat((obs_clean, z), dim=-1)
+            # Policy input - X x N x T x (O+Z)
+            obs = torch.cat((obs_clean, z), dim=-1)
 
-        # Compute discounted return (reward over all time-steps)
-        returns = torch.Tensor(
-        np.stack([
-            discount_cumsum(reward, self.gamma)
-            for reward in rewards.view(-1, self.T).cpu().numpy()
-        ]))
+            # Compute discounted return (reward over all time-steps)
+            returns = torch.Tensor(
+            np.stack([
+                discount_cumsum(reward, self.gamma)
+                for reward in rewards.view(-1, self.T).cpu().numpy()
+            ]))
 
-        with tabular.prefix('IRL' + '/'):
-            tabular.record('AverageReturn', np.mean(returns.cpu().detach().numpy()))
-            tabular.record('MaxReturn', np.max(returns.cpu().detach().numpy()))
-            tabular.record('MinReturn', np.min(returns.cpu().detach().numpy()))
+            with tabular.prefix('IRL' + '/'):
+                tabular.record('AverageReturn', np.mean(returns.cpu().detach().numpy()))
+                tabular.record('MaxReturn', np.max(returns.cpu().detach().numpy()))
+                tabular.record('MinReturn', np.min(returns.cpu().detach().numpy()))
 
-        #Copy old policy for computing kl-divergence
-        self._old_policy = copy.deepcopy(self._policy)
+            #Copy old policy for computing kl-divergence
+            self._old_policy = copy.deepcopy(self._policy)
 
-        lengths = self.T*torch.ones((
-         self._meta_batch_size, self._batch_size, 1, 1)).int().to(global_device())
-        returns = returns.to(global_device())
-        #Fit and compute baseline
-        baselines = []
-        advantages = []
-        vf_loss_before = []
-        vf_loss_after = []
-        for obses, rets, rew, leng in zip(obs.view(
-                     self._meta_batch_size, -1, self.O + self._latent_dim),
-                     returns.view(self._meta_batch_size, -1, ),
-                     rewards.view(self._meta_batch_size, -1, ),
-                     lengths.view(self._meta_batch_size, -1, )):
-         with torch.no_grad():
-             vf_loss_before.append(self._baseline.compute_loss(obses, rets))
-         for dataset in self._baseline_optimizer.get_minibatch(
-                 obses, rets):
-             self._train_value_function(*dataset)
-         with torch.no_grad():
-             vf_loss_after.append(self._baseline.compute_loss(obses, rets))
-             baseline = self._baseline(obses)
-             baselines.append(baseline)
-         if self._maximum_entropy:
-             policy_entropies = self._compute_policy_entropy(
-                 obses.view(-1, self.T, self.O + self._latent_dim))
-             rew += self._policy_ent_coeff * policy_entropies.view(-1, )
-         advantage = self._compute_advantage(rew.view(-1, self.T, ).cpu(), 
-          leng.view(-1).cpu(), baseline.view(-1, self.T, ).cpu())
-         advantages.append(advantage)
+            lengths = self.T*torch.ones((
+                self._meta_batch_size, self._batch_size, 1, 1)).int().to(global_device())
+            returns = returns.to(global_device())
+            #Fit and compute baseline
+            baselines = []
+            advantages = []
+            vf_loss_before = []
+            vf_loss_after = []
+            for obses, rets, rew, leng in zip(obs.view(
+                            self._meta_batch_size, -1, self.O + self._latent_dim),
+                            returns.view(self._meta_batch_size, -1, ),
+                            rewards.view(self._meta_batch_size, -1, ),
+                            lengths.view(self._meta_batch_size, -1, )):
+                with torch.no_grad():
+                    vf_loss_before.append(self._baseline.compute_loss(obses, rets))
+                for dataset in self._baseline_optimizer.get_minibatch(
+                        obses, rets):
+                    self._train_value_function(*dataset)
+                with torch.no_grad():
+                    vf_loss_after.append(self._baseline.compute_loss(obses, rets))
+                    baseline = self._baseline(obses)
+                    baselines.append(baseline)
+                if self._maximum_entropy:
+                    policy_entropies = self._compute_policy_entropy(
+                        obses.view(-1, self.T, self.O + self._latent_dim))
+                    rew += self._policy_ent_coeff * policy_entropies.view(-1, )
+                advantage = self._compute_advantage(rew.view(-1, self.T, ).cpu(), 
+                leng.view(-1).cpu(), baseline.view(-1, self.T, ).cpu())
+                advantages.append(advantage)
 
-        #Stack on task dimension 
-        baselines = torch.stack(baselines).to(global_device())
-        advantages = torch.stack(advantages).to(global_device())
-        vf_loss_after = torch.stack(vf_loss_after).mean()
-        vf_loss_before = torch.stack(vf_loss_before).mean()
+            #Stack on task dimension 
+            baselines = torch.stack(baselines).to(global_device())
+            advantages = torch.stack(advantages).to(global_device())
+            vf_loss_after = torch.stack(vf_loss_after).mean()
+            vf_loss_before = torch.stack(vf_loss_before).mean()
 
-        advs_flat = advantages.view(self._meta_batch_size, -1, )
+            advs_flat = advantages.view(self._meta_batch_size, -1, )
 
-        obs_flat = obs.view(self._meta_batch_size, -1, self.O + 
-         self._latent_dim).to(global_device())
-        actions_flat = actions.view(self._meta_batch_size, -1, self.A).to(global_device())
-        returns_flat = returns.view(self._meta_batch_size, -1, ).to(global_device())
+            obs_flat = obs.view(self._meta_batch_size, -1, self.O + 
+                self._latent_dim).to(global_device())
+            actions_flat = actions.view(self._meta_batch_size, -1, self.A).to(global_device())
+            returns_flat = returns.view(self._meta_batch_size, -1, ).to(global_device())
 
-        #Compute losses before
-        with torch.no_grad():
-            policy_loss_before = self._compute_loss_with_adv(
-                obs_flat, actions_flat, advs_flat)
-            kl_before = self._compute_kl_constraint(obs)
+            #Compute losses before
+            with torch.no_grad():
+                policy_loss_before = self._compute_loss_with_adv(
+                    obs_flat, actions_flat, advs_flat)
+                kl_before = self._compute_kl_constraint(obs)
 
-        self._train(obs_clean, obs_flat, actions_flat, returns_flat, advs_flat)
+            self._train(obs_clean, obs_flat, actions_flat, returns_flat, advs_flat)
 
-        #Compute losses after
-        with torch.no_grad():
-            policy_loss_after = self._compute_loss_with_adv(
-                obs_flat, actions_flat, advs_flat)
-            kl_after = self._compute_kl_constraint(obs)
+            #Compute losses after
+            with torch.no_grad():
+                policy_loss_after = self._compute_loss_with_adv(
+                    obs_flat, actions_flat, advs_flat)
+                kl_after = self._compute_kl_constraint(obs)
 
-        #Logging
-        with tabular.prefix('TRPO Policy' + '/'):
-            tabular.record('LossBefore', policy_loss_before.item())
-            tabular.record('LossAfter', policy_loss_after.item())
-            tabular.record('dLoss',
-                        (policy_loss_before - policy_loss_after).item())
-            tabular.record('KLBefore', kl_before.item())
-            tabular.record('KL', kl_after.item())
+            #Logging
+            with tabular.prefix('TRPO Policy' + '/'):
+                tabular.record('LossBefore', policy_loss_before.item())
+                tabular.record('LossAfter', policy_loss_after.item())
+                tabular.record('dLoss',
+                            (policy_loss_before - policy_loss_after).item())
+                tabular.record('KLBefore', kl_before.item())
+                tabular.record('KL', kl_after.item())
 
-        with tabular.prefix('TRPO Value Function' + '/'):
-            tabular.record('LossBefore', vf_loss_before.item())
-            tabular.record('LossAfter', vf_loss_after.item())
-            tabular.record('dLoss',
-                        vf_loss_before.item() - vf_loss_after.item())
+            with tabular.prefix('TRPO Value Function' + '/'):
+                tabular.record('LossBefore', vf_loss_before.item())
+                tabular.record('LossAfter', vf_loss_after.item())
+                tabular.record('dLoss',
+                            vf_loss_before.item() - vf_loss_after.item())
 
-      trainer.step_itr += 1
+        trainer.step_itr += 1
 
 
-  def _pre_train(self, batch_size=400, kl_weight=0.1):
+    def _pre_train(self, batch_size=400, kl_weight=0.1):
 
-      r"""Initialze Context-Encoder.
-      Args:
+      """Initialze Context-Encoder.
+        Args:
           batch_size (int): Number of expert trajectories for each iteration`.
           kl_weight (float): Weight of the latent-loss.
-      """
+       """
 
       # Copy initial policy parameters
       policy_state_dict = copy.deepcopy(self._policy.networks[1].state_dict())
@@ -555,10 +554,10 @@ class PEMIRL(RLAlgorithm):
        #        )
 
    #Reset policy parameters to initial parameters
-   self._policy.networks[1].load_state_dict(policy_state_dict)
+    self._policy.networks[1].load_state_dict(policy_state_dict)
 
 
-  def _train_airl(self, obs, next_obs, actions_log_prob, 
+    def _train_airl(self, obs, next_obs, actions_log_prob, 
                   exp_obs, exp_next_obs, exp_actions, 
                   exp_action_log_prob, exp_traj_batch):
 
@@ -599,7 +598,7 @@ class PEMIRL(RLAlgorithm):
            exp_action_log_prob_batch)
 
 
-  def _train_airl_once(self, exp_traj_batch, obs, next_obs, actions_log_prob, 
+    def _train_airl_once(self, exp_traj_batch, obs, next_obs, actions_log_prob, 
                           exp_obs, exp_next_obs, exp_actions, exp_action_log_prob):
 
       r"""Perform one iteration of discriminator training with batches of size N.
@@ -724,7 +723,7 @@ class PEMIRL(RLAlgorithm):
       self._central_optimizer.step()
 
 
-  def _eval_airl(self, obs, next_obs, actions, actions_log_prob, exp_traj):
+    def _eval_airl(self, obs, next_obs, actions, actions_log_prob, exp_traj):
 
       r"""Evaluate demonstrations using trained reward-encoder.
       Args:
@@ -822,7 +821,7 @@ class PEMIRL(RLAlgorithm):
       return reward.view(self._meta_batch_size, self._batch_size, self.T, 1)
 
 
-  def _train(self, obs_clean, obs, actions, returns, advs):
+    def _train(self, obs_clean, obs, actions, returns, advs):
       r"""Train the policy with minibatch.
       Args:
           obs (torch.Tensor): Observation from the environment with shape
@@ -839,7 +838,7 @@ class PEMIRL(RLAlgorithm):
                           advs.view(self._meta_batch_size, -1, 1).cpu())
 
 
-  def _train_policy(self, obs, actions, advantages):
+    def _train_policy(self, obs, actions, advantages):
       r"""Train the policy.
       Args:
           obs (torch.Tensor): Observation from the environment
@@ -866,7 +865,7 @@ class PEMIRL(RLAlgorithm):
       return loss
 
 
-  def _train_value_function(self, obs, returns):
+    def _train_value_function(self, obs, returns):
       r"""Train the value function.
       Args:
           obs (torch.Tensor): Observation from the environment
@@ -886,7 +885,7 @@ class PEMIRL(RLAlgorithm):
       return loss.mean()
 
 
-  def _compute_policy_entropy(self, obs):
+    def _compute_policy_entropy(self, obs):
 
       r"""Compute entropy value of probability distribution.
       Notes: P is the maximum episode length (self.max_episode_length)
@@ -911,7 +910,7 @@ class PEMIRL(RLAlgorithm):
       return policy_entropy
 
 
-  def _compute_advantage(self, rewards, valids, baselines):
+    def _compute_advantage(self, rewards, valids, baselines):
       r"""Compute advantages with Generalized Advantage Estimation (GAE).
       Notes: T is the maximum episode length
       Args:
@@ -941,7 +940,7 @@ class PEMIRL(RLAlgorithm):
       return advantage_flat
 
 
-  def _compute_loss_with_adv(self, obs, actions, advantages):
+    def _compute_loss_with_adv(self, obs, actions, advantages):
       r"""Compute mean value of loss.
       Args:
           obs (torch.Tensor): Observation from the environment
@@ -970,7 +969,7 @@ class PEMIRL(RLAlgorithm):
       return objectives.mean()
 
 
-  def _compute_kl_constraint(self, obs):
+    def _compute_kl_constraint(self, obs):
       r"""Compute KL divergence.
       Compute the KL divergence between the old policy distribution and
       current policy distribution.
@@ -1001,7 +1000,7 @@ class PEMIRL(RLAlgorithm):
       return kl_constraints.mean()
 
 
-  def _compute_objective(self, advantages, obs, actions):
+    def _compute_objective(self, advantages, obs, actions):
       r"""Compute TRPO objective value.
       Args:
           advantages (torch.Tensor): Advantage value at each step
@@ -1034,7 +1033,7 @@ class PEMIRL(RLAlgorithm):
       return surrogate
 
 
-  def _obtain_samples(self,
+    def _obtain_samples(self,
                       trainer,
                       itr,
                       num_samples):
@@ -1077,7 +1076,7 @@ class PEMIRL(RLAlgorithm):
               self._replay_buffers[self._task_idx].add_path(p)
 
 
-  def _obtain_experts(self, experts_dir):
+    def _obtain_experts(self, experts_dir):
 
       """ Get expert trajectories and store in buffer
       Args:
@@ -1116,7 +1115,7 @@ class PEMIRL(RLAlgorithm):
 
               self._expert_traj_buffers[i].add_path(p)
 
-  def _sample_data(self, indices):
+    def _sample_data(self, indices):
 
       """Sample batch of training data from a list of tasks.
       Args:
@@ -1210,7 +1209,7 @@ class PEMIRL(RLAlgorithm):
        Next_actions, Actions_log_prob, Rewards, Successes, Lengths
 
 
-  def _sample_experts(self, indices, n=1):
+    def _sample_experts(self, indices, n=1):
 
       """Sample batch of expert trajectories from a list of tasks.
       Args:
@@ -1282,8 +1281,8 @@ class PEMIRL(RLAlgorithm):
 
       return observations, next_observations, actions, rewards#, success, lengths
 
-  @classmethod
-  def get_env_spec(cls, env_spec, latent_dim, module, max_episode_length):
+    @classmethod
+    def get_env_spec(cls, env_spec, latent_dim, module, max_episode_length):
 
       """Get environment specs of value-function/encoder with latent dimension.
       Args:
@@ -1322,8 +1321,8 @@ class PEMIRL(RLAlgorithm):
 
       return spec
 
-  @classmethod
-  def augment_env_spec(cls, env_spec, latent_dim):
+    @classmethod
+    def augment_env_spec(cls, env_spec, latent_dim):
 
       """Augment environment by a size of latent dimension.
       Args:
@@ -1343,8 +1342,8 @@ class PEMIRL(RLAlgorithm):
                           dtype=np.float32)
       return EnvSpec(aug_obs, aug_act)
 
-  @staticmethod
-  def _check_entropy_configuration(entropy_method, center_adv,
+    @staticmethod
+    def _check_entropy_configuration(entropy_method, center_adv,
                                       stop_entropy_gradient, policy_ent_coeff):
       if entropy_method not in ('max', 'regularized', 'no_entropy'):
           raise ValueError('Invalid entropy_method')
@@ -1362,7 +1361,7 @@ class PEMIRL(RLAlgorithm):
                                   'when there is no entropy method')
 
 
-  def sample_batch(self, *args, batch_size):
+    def sample_batch(self, *args, batch_size):
       # sample a batch for each task
       if len(args[0].size()) > 3:
           N = args[0].size(1)
@@ -1374,7 +1373,7 @@ class PEMIRL(RLAlgorithm):
       return [data[batch_idxs] for data in args]
 
 
-  def log_normal_pdf(self, sample, mean, logvar, raxis=1):
+    def log_normal_pdf(self, sample, mean, logvar, raxis=1):
 
       """ Log-normal pdf for initializing context-encoder """
 
@@ -1383,8 +1382,8 @@ class PEMIRL(RLAlgorithm):
           logvar + np.log(2.*np.pi)), 
           axis=raxis)
 
-  ### For when resuming training ###
-  def __getstate__(self):
+    ### For when resuming training ###
+    def __getstate__(self):
       """Object.__getstate__.
       Returns:
           dict: the state to be pickled for the instance.
@@ -1394,8 +1393,8 @@ class PEMIRL(RLAlgorithm):
       del data['_expert_traj_buffers']
       return data
 
-  ### For when resuming training ###
-  def __setstate__(self, state):
+    ### For when resuming training ###
+    def __setstate__(self, state):
       """Object.__setstate__.
       Args:
           state (dict): unpickled state.
@@ -1413,8 +1412,8 @@ class PEMIRL(RLAlgorithm):
 
       self._is_resuming = True
 
-  @property
-  def networks(self):
+    @property
+    def networks(self):
       """Return all the networks within the model.
       Returns:
           list: A list of networks.
@@ -1422,7 +1421,7 @@ class PEMIRL(RLAlgorithm):
       return self._policy.networks + [self._vf] + [self._baseline]
 
 
-  def to(self, device=None):
+    def to(self, device=None):
       """Put all the networks within the model on device.
       Args:
           device (str): ID of GPU or CPU.
@@ -1435,21 +1434,21 @@ class PEMIRL(RLAlgorithm):
 
 
 class PEMIRLWorker(DefaultWorker):
-"""A worker class used in sampling for PEMIRL.
-It stores context and resamples belief in the policy every step.
-Args:
-    seed (int): The seed to use to intialize random number generators.
-    max_episode_length(int or float): The maximum length of episodes which
-        will be sampled. Can be (floating point) infinity.
-    worker_number (int): The number of the worker where this update is
-        occurring. This argument is used to set a different seed for each
-        worker.
-Attributes:
-    agent (Policy or None): The worker's agent.
-    env (Environment or None): The worker's environment.
-"""
+    """A worker class used in sampling for PEMIRL.
+    It stores context and resamples belief in the policy every step.
+    Args:
+        seed (int): The seed to use to intialize random number generators.
+        max_episode_length(int or float): The maximum length of episodes which
+            will be sampled. Can be (floating point) infinity.
+        worker_number (int): The number of the worker where this update is
+            occurring. This argument is used to set a different seed for each
+            worker.
+    Attributes:
+        agent (Policy or None): The worker's agent.
+        env (Environment or None): The worker's environment.
+    """
 
-  def __init__(self,
+    def __init__(self,
                   *,
                   seed,
                   max_episode_length,
@@ -1459,12 +1458,12 @@ Attributes:
                           max_episode_length=max_episode_length,
                           worker_number=worker_number)
 
-  def start_episode(self):
+    def start_episode(self):
       """Begin a new episode."""
       self._eps_length = 0
       self._prev_obs, self._episode_info = self.env.reset()
 
-  def step_episode(self):
+    def step_episode(self):
       """Take a single time-step in the current episode.
       Returns:
           bool: True iff the episode is done, either due to the environment
@@ -1493,7 +1492,7 @@ Attributes:
 
       return True
 
-  def rollout(self):
+    def rollout(self):
       """Sample a single episode of the agent in the environment.
       Returns:
           EpisodeBatch: The collected episode.
